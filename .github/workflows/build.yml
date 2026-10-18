@@ -51,7 +51,7 @@ jobs:
           pyinstaller WebImageGrabber.spec --noconfirm
           "{0:N1} MB" -f ((Get-ChildItem dist/WebImageGrabber -Recurse | Measure-Object Length -Sum).Sum / 1MB)
 
-      - name: Selftest - packaged WebImageGrabber_cli.exe vs local fixture site (incl. Edge render mode)
+      - name: "Selftest - packaged WebImageGrabber_cli.exe vs local fixture site (incl. Edge render mode)"
         shell: pwsh
         run: |
           $out = "$PWD\selftest-out\cli"
@@ -61,7 +61,7 @@ jobs:
           Get-Content "$out\selftest_report.json" | Select-String '"ok"'
           if ($code -ne 0) { Get-Content "$out\selftest_report.json"; throw "selftest failed: $code" }
 
-      - name: GUI - packaged windowed exe, real window: fetch -> thumbnails -> click tiles -> scroll tests -> Save -> verify files
+      - name: "GUI - packaged windowed exe, real window (fetch, thumbnails, click tiles, scroll tests, Save, verify files)"
         shell: pwsh
         run: |
           $srv = Start-Process -FilePath dist\WebImageGrabber\WebImageGrabber_cli.exe -ArgumentList @("--serve-fixture","--fixture-port","8765") -PassThru -WindowStyle Hidden
