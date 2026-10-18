@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+.models-cache/
+clips/
+selftest-out/
+screens-ci/
+*.part
+.wig-venv/
+selftest-out/
+screens-ci/

@@ -1,0 +1,5 @@
+# Windows x64 build (Python 3.13).  No ML, no OpenCV, no numpy: the app is just Qt + requests.
+PySide6-Essentials==6.12.0
+requests==2.34.2
+websocket-client==1.9.2
+pyinstaller==6.22.3

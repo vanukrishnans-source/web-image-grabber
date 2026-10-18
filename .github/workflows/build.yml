@@ -1,0 +1,184 @@
+# Build Web Image Grabber (Windows x64 portable zip), test the PACKAGED exe end-to-end on windows-latest, publish a Release.
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create / update the GitHub Release with the zip"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.13"
+  PYTHONUTF8: "1"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-win.txt
+
+      - name: Install Python deps
+        shell: pwsh
+        run: |
+          python -m pip install -U pip wheel
+          pip install -r requirements-win.txt
+          python -c "import PySide6, requests, websocket; print(PySide6.__version__, requests.__version__)"
+
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python -m unittest tests.test_extract -v
+          if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
+
+      - name: PyInstaller (onedir, GUI exe + console exe)
+        shell: pwsh
+        run: |
+          pyinstaller WebImageGrabber.spec --noconfirm
+          "{0:N1} MB" -f ((Get-ChildItem dist/WebImageGrabber -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+
+      - name: Selftest - packaged WebImageGrabber_cli.exe vs local fixture site (incl. Edge render mode)
+        shell: pwsh
+        run: |
+          $out = "$PWD\selftest-out\cli"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          & dist\WebImageGrabber\WebImageGrabber_cli.exe --selftest --require-render --selftest-out $out
+          $code = $LASTEXITCODE
+          Get-Content "$out\selftest_report.json" | Select-String '"ok"'
+          if ($code -ne 0) { Get-Content "$out\selftest_report.json"; throw "selftest failed: $code" }
+
+      - name: GUI - packaged windowed exe, real window: fetch -> thumbnails -> click tiles -> scroll tests -> Save -> verify files
+        shell: pwsh
+        run: |
+          $srv = Start-Process -FilePath dist\WebImageGrabber\WebImageGrabber_cli.exe -ArgumentList @("--serve-fixture","--fixture-port","8765") -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              try { $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/page.html -TimeoutSec 3; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch { Start-Sleep -Milliseconds 500 }
+            }
+            if (-not $ok) { throw "fixture server did not start" }
+            $out = "$PWD\screens-ci"
+            $save = "$PWD\selftest-out\gui-saved"
+            New-Item -ItemType Directory -Force -Path $out, $save | Out-Null
+            $p = Start-Process -FilePath dist\WebImageGrabber\WebImageGrabber.exe -PassThru -Wait -ArgumentList @(
+              "--url","http://127.0.0.1:8765/page.html","--select","0,2,5,11","--save","--folder","`"$save`"",
+              "--scroll-test","--shots-dir","`"$out`"","--report","`"$out\gui_report.json`"","--size","1280x720","--timeout","120")
+            Write-Host "plain GUI exit code $($p.ExitCode)"
+            Get-Content "$out\gui_report.json" -Raw | Out-Host
+            if ($p.ExitCode -ne 0) { throw "GUI run failed" }
+            $rep = Get-Content "$out\gui_report.json" -Raw | ConvertFrom-Json
+            $files = @(Get-ChildItem $save -File)
+            if ($files.Count -ne 4) { throw "expected exactly 4 saved files, got $($files.Count)" }
+            if ($rep.selected.Count -ne 4 -or $rep.saved.Count -ne 4) { throw "selected/saved mismatch" }
+            foreach ($s in $rep.selected) { if (-not ($rep.saved | Where-Object { $_.sha1 -eq $s.sha1 })) { throw "saved bytes differ from the downloaded original: $($s.name)" } }
+            if (-not $rep.scroll_test.ok) { throw "scroll / touch test failed" }
+            # render mode through the GUI
+            $save2 = "$PWD\selftest-out\gui-saved-render"
+            New-Item -ItemType Directory -Force -Path $save2 | Out-Null
+            $p2 = Start-Process -FilePath dist\WebImageGrabber\WebImageGrabber.exe -PassThru -Wait -ArgumentList @(
+              "--url","http://127.0.0.1:8765/js.html","--render","--select","all","--save","--folder","`"$save2`"",
+              "--shots-dir","`"$out`"","--shot-prefix","render_","--report","`"$out\gui_render_report.json`"","--size","1280x720","--timeout","150")
+            Write-Host "render GUI exit code $($p2.ExitCode)"
+            Get-Content "$out\gui_render_report.json" -Raw | Out-Host
+            if ($p2.ExitCode -ne 0) { throw "GUI render run failed" }
+            $names = (Get-ChildItem $save2 -File).Name
+            if (($names -notcontains "js-made.jpg") -or ($names -notcontains "js-lazy.jpg")) { throw "render mode did not save the JS-built images: $names" }
+          } finally {
+            Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Make portable zip
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File packaging/make_zip.ps1
+          Get-ChildItem dist\*.zip | Format-Table Name, Length
+          Get-Content dist\SHA256SUMS
+
+      - name: Anonymous zip verify (extract + run --version + selftest)
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist\WebImageGrabber-*-win64.zip | Select-Object -First 1
+          $tmp = Join-Path $env:TEMP "wig-anon-verify"
+          if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+          Expand-Archive $zip.FullName -DestinationPath $tmp
+          $exe = Get-ChildItem $tmp -Recurse -Filter WebImageGrabber_cli.exe | Select-Object -First 1
+          if (-not $exe) { throw "cli exe missing from zip" }
+          & $exe.FullName --version
+          if ($LASTEXITCODE -ne 0) { throw "extracted exe failed" }
+          & $exe.FullName --selftest --selftest-out "$tmp\st"
+          if ($LASTEXITCODE -ne 0) { throw "extracted selftest failed" }
+          $sha = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
+          $expected = (Get-Content dist\SHA256SUMS | Select-Object -First 1).Split()[0].ToLower()
+          if ($sha -ne $expected) { throw "SHA mismatch $sha vs $expected" }
+          Write-Host "anonymous zip OK: $($zip.Name) sha=$sha"
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebImageGrabber-win64-tests
+          path: |
+            selftest-out/**/*.json
+            selftest-out/gui-saved/**
+            selftest-out/gui-saved-render/**
+            screens-ci/**
+            dist/SHA256SUMS
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebImageGrabber-win64-zip
+          path: dist/WebImageGrabber-*-win64.zip
+          compression-level: 0
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $zip = Get-ChildItem dist\WebImageGrabber-*-win64.zip | Select-Object -First 1
+          $ver = $zip.Name -replace '^WebImageGrabber-(.+)-win64\.zip$', '$1'
+          $tag = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref_name }}" } else { "v$ver" }
+          $sha = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
+          $r = Get-Content selftest-out\cli\selftest_report.json -Raw | ConvertFrom-Json
+          $npass = @($r.checks | Where-Object { $_.ok }).Count
+          $lines = @(
+            "Web Image Grabber **$ver** - portable Windows 10/11 x64. Paste a web page address, see a thumbnail of every picture, tick the ones you want, save the full-size originals to a folder you pick.",
+            "",
+            "| Asset | Size | SHA-256 |",
+            "|---|---|---|",
+            "| $($zip.Name) | $($zip.Length) bytes | ``$sha`` |",
+            "",
+            "### Run",
+            "1. Unzip, open the **WebImageGrabber** folder, run **WebImageGrabber.exe**.",
+            "2. SmartScreen (unsigned build): **More info** -> **Run anyway**.",
+            "",
+            "### CI (windows-latest, packaged exe)",
+            "- Selftest vs local fixture site: $npass / $(@($r.checks).Count) checks passed (img, srcset, lazy data-src, CSS backgrounds, og:image, data: URI, duplicates, tracking pixel, hotlink + cookie, name clashes, WebP convert, Edge render mode).",
+            "- Real windowed exe: fetch -> thumbnails -> click tiles -> wheel / PgUp / PgDn / drag / press-and-hold -> Save -> saved bytes == selected originals.",
+            "",
+            "Details: https://github.com/${{ github.repository }}#readme"
+          )
+          $lines -join "`n" | Out-File -Encoding utf8 notes.md
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag $zip.FullName dist\SHA256SUMS --title "Web Image Grabber $tag" --notes-file notes.md
+          } else {
+            gh release upload $tag $zip.FullName dist\SHA256SUMS --clobber
+            gh release edit $tag --notes-file notes.md
+          }
