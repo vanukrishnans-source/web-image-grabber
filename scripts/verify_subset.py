@@ -18,7 +18,7 @@ print(f"saved set == ticked set (SHA-1 of bytes): {sel_sha == saved_sha}")
 rows = []
 for s in rep["selected"]:
     f = found[s["order"]]
-    r = requests.get(f["url"], headers={"User-Agent": "Mozilla/5.0", "Accept": "image/webp,image/*,*/*;q=0.8"}, timeout=60)
+    r = requests.get(f["url"], headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0", "Accept": "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", "Referer": f["url"]}, timeout=60)
     fresh = hashlib.sha1(r.content).hexdigest()
     p = next((q for q in files if hashlib.sha1(q.read_bytes()).hexdigest() == s["sha1"]), None)
     dims = "svg"
