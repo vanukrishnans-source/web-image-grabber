@@ -90,7 +90,7 @@ def build_fixture() -> dict[str, tuple[str, bytes]]:
 
 
 EXPECTED_NAMES = {"og.jpg", "favicon.png", "photo1.jpg", "pic-1600.jpg", "lazy1.png", "bg-inline.png", "bg-css.jpg",
-                  "pic-hero.webp", "protected.jpg", "cookie.png", "noext", "same.jpg", "ldjson.jpg", "script.png",
+                  "pic-hero.webp", "protected.jpg", "cookie.png", "noext.png", "same.jpg", "ldjson.jpg", "script.png",
                   "poster.jpg", "full-big.jpg", "logo.svg"}
 # +2 files named same.jpg (a/ and b/) and one data: URI image (image-N)
 NOT_EXPECTED = {"small.jpg", "pic-400.jpg", "pic-800.jpg", "photo-fallback.jpg", "missing.jpg"}
@@ -284,7 +284,7 @@ def run(out: Path, require_render: bool = False) -> int:
         check("thumbnails generated for every image", all(i.thumb for i in nontiny), f"{sum(1 for i in nontiny if not i.thumb)} without")
 
         # ---- 2. save a subset; exact files, full resolution, clean names
-        pick_names = ["full-big.jpg", "pic-hero.webp", "noext", "same.jpg", "logo.svg"]
+        pick_names = ["full-big.jpg", "pic-hero.webp", "noext.png", "same.jpg", "logo.svg"]
         pick = [i for i in items if i.name in pick_names]
         save_dir = out / "saved_subset"
         res = core.save_items(pick, save_dir, "keep")

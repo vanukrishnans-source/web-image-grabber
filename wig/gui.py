@@ -28,7 +28,7 @@ CARD = "#222837"
 TEXT = "#e8ecf4"
 MUTED = "#98a2b8"
 
-CARD_W = {"Small": 150, "Medium": 200, "Large": 270}
+CARD_W = {"Small": 130, "Medium": 165, "Large": 240}
 TYPE_GROUPS = [("JPG", {"jpg"}), ("PNG", {"png"}), ("WEBP", {"webp"}), ("GIF", {"gif"}), ("SVG", {"svg"})]
 SORTS = ["Page order", "Largest dimensions", "Smallest dimensions", "Largest file", "Smallest file"]
 
